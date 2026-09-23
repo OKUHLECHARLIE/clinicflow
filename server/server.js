@@ -3,19 +3,38 @@ import express from 'express';
 import pg from 'pg';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-try{
+
+try {
   loadEnvFile();
-}catch { 
-  // No .env file in production — real environment variables are used instead. 
-  }
+} catch {
+  // No .env file in production — real environment variables are used instead.
+}
+
 const { Pool } = pg;
 const app = express();
-const pool = new Pool();
+
+// Render provides a single DATABASE_URL; local dev uses individual PG* vars.
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
+    : {},
+);
+
 const port = Number(process.env.PORT ?? 3000);
+
 const receptionistStatuses = ['Scheduled', 'Arrived', 'Cancelled'];
 const clinicianStatuses = ['In Consultation', 'Completed'];
 
 app.use(express.json());
+
+// Allow requests from any origin (fine for a demo app with fictional data).
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, x-demo-role');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 const asyncRoute = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -82,7 +101,7 @@ app.get('/api/data', asyncRoute(async (req, res) => {
        WHERE role = 'Clinician'
        ORDER BY full_name`,
     ),
-        pool.query(
+    pool.query(
       `SELECT a.id,
               a.patient_id AS "patientId",
               a.staff_id AS "staffId",
@@ -108,7 +127,7 @@ app.get('/api/data', asyncRoute(async (req, res) => {
        ORDER BY a.starts_at`,
       [date, search],
     ),
-      ]);
+  ]);
 
   res.json({
     patients: patientsResult.rows,
@@ -156,7 +175,8 @@ app.post('/api/appointments', allowRoles('Receptionist'), asyncRoute(async (req,
   if (overlap.rows.length) {
     return res.status(409).json({ error: 'That clinician already has an overlapping appointment.' });
   }
-    const result = await pool.query(
+
+  const result = await pool.query(
     `INSERT INTO appointments
        (patient_id, staff_id, starts_at, ends_at, status, reason)
      VALUES ($1, $2, $3, $4, 'Scheduled', $5)
@@ -242,17 +262,19 @@ app.patch(
     }
   }),
 );
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Serve the built React frontend (single-service deployment).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use(express.static(path.join(__dirname, '../client/dist')));
-app.get(/^\/(?!api).*/, (req, res) => {
+app.get(/^\/(?!api).*/, (_req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
+
 app.use((error, _req, res, _next) => {
   console.error(error);
   res.status(500).json({ error: 'Unexpected server error.' });
 });
 
 app.listen(port, () => {
-  console.log(`ClinicFlow API running at http://localhost:${port}`);
+  console.log(`ClinicFlow API running on port ${port}`);
 });
