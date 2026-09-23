@@ -1,9 +1,13 @@
 import { loadEnvFile } from 'node:process';
 import express from 'express';
 import pg from 'pg';
-
-loadEnvFile();
-
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+try{
+  loadEnvFile();
+}catch { 
+  // No .env file in production — real environment variables are used instead. 
+  }
 const { Pool } = pg;
 const app = express();
 const pool = new Pool();
@@ -238,6 +242,12 @@ app.patch(
     }
   }),
 );
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+app.use(express.static(path.join(__dirname, '../client/dist')));
+app.get(/^\/(?!api).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+});
 app.use((error, _req, res, _next) => {
   console.error(error);
   res.status(500).json({ error: 'Unexpected server error.' });
